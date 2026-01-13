@@ -1,31 +1,24 @@
 import numpy as np
 
-def detect_events(time, rpeaks, rr):
+def detect_events(time, rpeaks):
+    """
+    Reguły wykrywania potencjalnych anomalii rytmu serca
+    """
     events = []
+    rr_intervals = np.diff(time[rpeaks]) * 1000  # ms
 
-    for i, rr_i in enumerate(rr):
+    for i, rr in enumerate(rr_intervals):
         t = time[rpeaks[i]]
 
-        if rr_i > 2000:
-            events.append({
-                "time": t,
-                "type": "pause",
-                "reason": "RR > 2s"
-            })
+        if rr > 2000:
+            events.append((t, "pauza rytmu (RR > 2s)"))
 
-        if rr_i < 400:
-            events.append({
-                "time": t,
-                "type": "tachy",
-                "reason": "RR < 400ms"
-            })
+        if rr < 400:
+            events.append((t, "tachykardia (RR < 400ms)"))
 
-    if len(rr) > 10:
-        if np.std(rr) / np.mean(rr) > 0.15:
-            events.append({
-                "time": time[rpeaks[len(rpeaks)//2]],
-                "type": "arrhythmia",
-                "reason": "RR irregularity"
-            })
+    if len(rr_intervals) > 10:
+        if np.std(rr_intervals) / np.mean(rr_intervals) > 0.15:
+            events.append((time[rpeaks[len(rpeaks)//2]],
+                           "nieregularność rytmu (arytmia)"))
 
     return events

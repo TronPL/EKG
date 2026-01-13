@@ -1,17 +1,15 @@
 import numpy as np
-import neurokit2 as nk
+from scipy.signal import butter, filtfilt
 
-def preprocess_ecg(time, signal):
+def bandpass_filter(signal, fs, low=0.5, high=40):
+    """
+    Filtr pasmowo-przepustowy dla sygnału EKG
+    """
+    nyq = 0.5 * fs
+    b, a = butter(3, [low / nyq, high / nyq], btype="band")
+    return filtfilt(b, a, signal)
+
+def preprocess(time, signal):
     fs = int(1 / np.mean(np.diff(time)))
-
-    signals, info = nk.ecg_process(signal, sampling_rate=fs)
-
-    rpeaks = info["ECG_R_Peaks"]
-    rr_intervals = np.diff(time[rpeaks]) * 1000  # ms
-
-    return {
-        "fs": fs,
-        "rpeaks": rpeaks,
-        "rr": rr_intervals,
-        "clean_signal": signals["ECG_Clean"]
-    }
+    filtered = bandpass_filter(signal, fs)
+    return fs, filtered
