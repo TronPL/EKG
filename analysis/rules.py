@@ -2,27 +2,28 @@ import numpy as np
 
 """
 Regułowy detektor arytmii z jednokanałowego Holtera ECG
-Autor: ---
-UWAGA: system screeningowy (podejrzenia, nie diagnoza)
+UWAGA: screening (podejrzenia, nie diagnoza)
+Jednostki:
+- time: sekundy
+- RR: milisekundy
 """
 
-
 # =====================================================
-# Pomocnicze: RR
+# RR
 # =====================================================
 
 def compute_rr(time, rpeaks):
     """
-    time   : ndarray czasu w sekundach
+    time   : ndarray czasu [s]
     rpeaks : indeksy R-peaków
     """
-    rr = np.diff(time[rpeaks]) * 1000      # RR w ms
-    rr_t = time[rpeaks[1:]]                # czas przypisany do RR
+    rr = np.diff(time[rpeaks]) * 1000  # RR [ms]
+    rr_t = time[rpeaks[1:]]            # czas przypisany do RR
     return rr, rr_t
 
 
 # =====================================================
-# Pauzy i bradykardia (Trzeba dorobić analizę w nocy bo tam niższy puls i może dać fałszywe alarmy)
+# Pauzy / Bradykardia
 # =====================================================
 
 def detect_pauses(rr, rr_t, rr_pause=2000, rr_brady=1200):
@@ -30,7 +31,7 @@ def detect_pauses(rr, rr_t, rr_pause=2000, rr_brady=1200):
 
     for r, t in zip(rr, rr_t):
         if r > rr_pause:
-            events.append((t, "pauza rytmu (RR > 2s)"))
+            events.append((t, "pauza rytmu (RR > 2.0 s)"))
         elif r > rr_brady:
             events.append((t, "bradykardia zatokowa"))
 
@@ -58,14 +59,14 @@ def detect_tachycardia(rr, rr_t, rr_tachy=400):
 def detect_premature_beats(rr, rr_t):
     events = []
 
-    if len(rr) < 2:
+    if len(rr) < 3:
         return events
 
     mean_rr = np.mean(rr)
 
     for i in range(len(rr) - 1):
         if rr[i] < 0.8 * mean_rr and rr[i + 1] > 1.2 * mean_rr:
-            events.append((rr_t[i], "skurcz przedwczesny (PAC/PVC)"))
+            events.append((rr_t[i], "podejrzenie skurczu przedwczesnego (PAC/PVC)"))
 
     return events
 
@@ -77,16 +78,19 @@ def detect_premature_beats(rr, rr_t):
 def detect_bigeminy(rr, rr_t):
     events = []
 
-    if len(rr) < 4:
+    if len(rr) < 6:
         return events
 
     m = np.mean(rr)
 
     for i in range(len(rr) - 3):
         p = rr[i:i + 4]
-        if (p[0] < 0.8 * m and p[1] > 1.2 * m and
-            p[2] < 0.8 * m and p[3] > 1.2 * m):
-            events.append((rr_t[i], "bigeminia"))
+        if (
+            p[0] < 0.8 * m and p[1] > 1.2 * m and
+            p[2] < 0.8 * m and p[3] > 1.2 * m and
+            np.std(p) > 50
+        ):
+            events.append((rr_t[i], "podejrzenie bigeminii"))
 
     return events
 
@@ -95,7 +99,7 @@ def detect_bigeminy(rr, rr_t):
 # SVT (podejrzenie)
 # =====================================================
 
-def detect_svt(rr, rr_t, min_beats=6):
+def detect_svt(rr, rr_t, min_beats=8):
     events = []
 
     if len(rr) < min_beats:
@@ -110,26 +114,36 @@ def detect_svt(rr, rr_t, min_beats=6):
 
 
 # =====================================================
-# Migotanie przedsionków (AF)
+# Migotanie przedsionków (AF) – OKNA
 # =====================================================
 
-def detect_af(rr, rr_t):
+def detect_af(rr, rr_t, window_s=30):
     events = []
 
     if len(rr) < 10:
         return events
 
-    cv = np.std(rr) / np.mean(rr)
-    rmssd = np.sqrt(np.mean(np.diff(rr) ** 2))
+    start = 0
+    while start < len(rr):
+        end = start
+        while end < len(rr) and rr_t[end] - rr_t[start] < window_s:
+            end += 1
 
-    if cv > 0.20 and rmssd > 80:
-        events.append((np.mean(rr_t), "migotanie przedsionków (AF)"))
+        window = rr[start:end]
+        if len(window) >= 10:
+            cv = np.std(window) / np.mean(window)
+            rmssd = np.sqrt(np.mean(np.diff(window) ** 2))
+
+            if cv > 0.20 and rmssd > 80:
+                events.append((rr_t[start], "migotanie przedsionków (AF – podejrzenie)"))
+
+        start = end
 
     return events
 
 
 # =====================================================
-# Blok AV II° (Wenckebach) – heurystyka
+# Wenckebach (Mobitz I) – heurystyka
 # =====================================================
 
 def detect_wenckebach(rr, rr_t):
@@ -140,21 +154,21 @@ def detect_wenckebach(rr, rr_t):
 
     for i in range(len(rr) - 3):
         r = rr[i:i + 4]
-        if r[0] > r[1] > r[2] and r[3] > 1.5 * np.mean(r[:3]):
-            events.append((rr_t[i + 3], "blok AV II° (Wenckebach?)"))
+        if (
+            r[0] > r[1] > r[2] and
+            r[3] > 1.5 * np.mean(r[:3])
+        ):
+            events.append((rr_t[i + 3], "blok AV II° (Wenckebach – podejrzenie)"))
 
     return events
+
+
 # =====================================================
 # GŁÓWNY PIPELINE
 # =====================================================
 
 def detect_arrhythmias(time, rpeaks):
-    """
-    Zwraca listę:
-    [(czas [s], opis zdarzenia), ...]
-    """
-
-    if len(rpeaks) < 3:
+    if len(rpeaks) < 5:
         return []
 
     rr, rr_t = compute_rr(time, rpeaks)
@@ -168,6 +182,5 @@ def detect_arrhythmias(time, rpeaks):
     events.extend(detect_af(rr, rr_t))
     events.extend(detect_wenckebach(rr, rr_t))
 
-    # sortowanie po czasie
     events.sort(key=lambda x: x[0])
     return events

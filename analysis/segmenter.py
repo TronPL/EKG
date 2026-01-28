@@ -1,4 +1,4 @@
-def build_segments(events, window=5):
+def build_segments(events, window=1):
     """
     Budowanie przedziałów czasowych do weryfikacji przez lekarza
     """
@@ -8,7 +8,7 @@ def build_segments(events, window=5):
         segments.append({
             "start": max(0, t - window),
             "end": t + window,
-            "reason": reason
+            "reasons": {reason}   # SET
         })
 
     segments.sort(key=lambda x: x["start"])
@@ -19,5 +19,10 @@ def build_segments(events, window=5):
             merged.append(seg)
         else:
             merged[-1]["end"] = max(merged[-1]["end"], seg["end"])
+            merged[-1]["reasons"].update(seg["reasons"])
+
+    # konwersja set → list (JSON-friendly)
+    for m in merged:
+        m["reasons"] = sorted(list(m["reasons"]))
 
     return merged
